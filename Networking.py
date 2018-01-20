@@ -2,7 +2,12 @@
 """
 Created on Tue Nov 01 14:49:01 2016
 
-@author: sfarooq1
+Company: University of Rochester Medical Center
+Team: Rochester Center for Health Informatics
+Supervisor: Dr. Martin Zand
+Author: Samir Farooq
+
+Documentation Available on GitHub
 """
 
 import datetime

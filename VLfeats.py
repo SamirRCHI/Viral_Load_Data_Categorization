@@ -2,7 +2,12 @@
 """
 Created on Mon May 22 13:57:51 2017
 
-@author: sfarooq1
+Company: University of Rochester Medical Center
+Team: Rochester Center for Health Informatics
+Supervisor: Dr. Martin Zand
+Author: Samir Farooq
+
+Documentation Available on GitHub
 """
 import numpy as np
 import colorsys
