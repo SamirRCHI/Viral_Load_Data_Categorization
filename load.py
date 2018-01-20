@@ -4,8 +4,8 @@ Created on Tue Mar 21 08:43:54 2017
 
 Company: University of Rochester Medical Center
 Team: Rochester Center for Health Informatics
-Supervisor: Dr. Martin Zand
-Author: Samir Farooq
+Supervisor: Dr. Martin Zand (martin_zand@urmc.rochester.edu)
+Author: Samir Farooq (samir_farooq@urmc.rochester.edu)
 """
 
 from Networking import *
