@@ -12,24 +12,21 @@ from Networking import *
 from VLfeats import *
 from copy import deepcopy as dc
 
-#CD4path = Networks('CD4_counts.csv','CD4_result','lab_date',tag='CD4',
-#                   conversion_rules={'CD4_result':'int'})
-#Diagpath = Networks('Diagnosis Codes.csv','description','diag_date',tag='Diag')  
-#
-#NPIpath = Networks('NPIpath.csv')
-#NPIpath1 = dc(NPIpath)
-#NPIpath2 = dc(NPIpath)
-#NPIpath3 = dc(NPIpath)
-
-def load_VLpath(filename = 'VLpath.csv',
+def load_VLpath(filename = 'VL_based_on_result.csv',
                 rename_dict = {0:'HVLS',1:'RVL',2:'SLVL',3:'DSVL',4:'SHVL'}):
-    VLpath = Networks(filename,'result','lab_date',tag='VL', # Load the viral load network
-                      conversion_rules={'result':'int'})
-    VLpath = auto_cluster(VLpath,False,4.8,'only',False,'l10',False,'pos only') # Compute hierarchical clustering
-    VLpath = rename_classes(VLpath,rename_dict) # Give meaningful names to the clusters found.
+    VLpath = Networks(None,'result','lab_date',tag='VL') 
+    # 1) We have initated the Networks -- we do not build directly because
+    #    the results are an exported replica of the original data.
+    #    We have built a different algorithm to build from such data:
+    VLpath.build_from_exported_csv(filename,'float')
+    # 2) We built from the exported data.
+    VLpath = auto_cluster(VLpath,False,4.8,'only',False,'l10',False,'pos only')
+    # 3) We computted the hierarchical clustering.
+    VLpath = rename_classes(VLpath,rename_dict) 
+    # 4) We gave meaningful names to the clustering results.
     return VLpath
 
-#VLpathT = load_VLpath()
+VLpathT = load_VLpath()
 
 def generate_figure(VLpath,fig_list=range(1,8),supp_fig_list=range(1,10)):
     EM = " - either doesn't exist or is generated outside of python."
@@ -78,19 +75,3 @@ def generate_figure(VLpath,fig_list=range(1,8),supp_fig_list=range(1,10)):
         else:
             print "Fig S#: "+str(fig_num)+EM
     
-
-#NPIpath1.add_classes(VL_class,VLpath1,print_result = False)
-#class_transfer(VLpath2,NPIpath2)
-#NPIpath3.add_classes(Terzian_Classifier_New,VLpath3,print_result = False)
-#NPIpath1.set_class_colors({'High Risk':'c','Remission':'m','Low Risk':'r','Healthy':'g'})
-#NPIpath = class_subsetting(NPIpath,[NPIpath1,NPIpath2,NPIpath3],
-#                           {'Pure SHVL':['High Risk','c','SHVL'],
-#                            'Pure Remission':['Remission','m','SHVL Suppression']})
-#class_transfer(NPIpath,VLpath1)
-#
-#Full_Net = dc(NPIpath)
-#merge_Networks(Full_Net,[VLpath1,CD4path,Diagpath],equi_color(4))
-#
-#NPIpath.Plot.get_patient_edges()
-#
-#NPIpath1 = adding_patient_info(NPIpath1,NPIpath.Plot)

@@ -92,7 +92,10 @@ class Node:
         self.sibling = {}
         self.up_fields = []
         self.sibling_checked = False
-        self.date = dts.date2num(conv_date(date))
+        if type(date) is str:
+            self.date = dts.date2num(conv_date(date))
+        else:
+            self.date = date
         self.is_class = False
         self.Class = None
         self.color = 'white'
@@ -617,6 +620,53 @@ class Networks:
                             if boolean:
                                 cur_Path.has_multinode = True
             rownum += 1
+        self.classes[None] = len(self.Nets)
+        f.close()
+        self.Plot = Plot_Network(self)
+    def build_from_exported_csv(self,filepath,conversion=None,fprop='n'):
+        if type(filepath) is str:
+            f = open(filepath,'r')
+            fcsv = csv.reader(f)
+        else:
+            fcsv = filepath
+        field = self.primary_field
+        for row in fcsv:
+            p_id,new_date = row[0],float(row[1])
+            if conversion == 'int':
+                val = int(row[2])
+            elif conversion == 'float':
+                val = float(row[2])
+            else:
+                val = row[2]
+            if new_date < self.T_0: self.T_0 = new_date
+            if new_date > self.T_final: self.T_final = new_date
+            prev_node = Node(new_date,field)
+            prev_node.add_field(field,val)
+            path = PatientPath(prev_node,field)
+            path.set_patient_id(p_id)
+            self.Nets[p_id] = {'Path':path}
+            self.pat_by_class[None][p_id] = path
+            path.set_parent_Network(self)
+            for i in range(3,len(row)):
+                if i % 2: #i.e. is it a date?
+                    new_date += float(row[i])
+                    if new_date > self.T_final: self.T_final = new_date
+                    cur_node = Node(new_date,field)
+                    continue
+                if conversion == 'int':
+                    val = int(row[i])
+                elif conversion == 'float':
+                    val = float(row[i])
+                else:
+                    val = row[i]
+                cur_node.add_field(field,val)
+                if new_date == 0.0:
+                    prev_node.add_sibling(cur_node,{field:fprop})
+                    if prev_node.is_multinode(): path.has_multinode = True
+                    continue
+                prev_node.add_child(cur_node)
+                prev_node = cur_node
+                path.update_len()
         self.classes[None] = len(self.Nets)
         f.close()
         self.Plot = Plot_Network(self)
