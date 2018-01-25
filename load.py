@@ -10,7 +10,6 @@ Author: Samir Farooq (samir_farooq@urmc.rochester.edu)
 
 from Networking import *
 from VLfeats import *
-from copy import deepcopy as dc
 
 def load_VLpath(filename = 'VL_based_on_result.csv',
                 rename_dict = {0:'HVLS',1:'RVL',2:'SLVL',3:'DSVL',4:'SHVL'}):
