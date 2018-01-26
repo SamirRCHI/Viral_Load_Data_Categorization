@@ -649,7 +649,7 @@ class Networks:
             path.set_parent_Network(self)
             for i in range(3,len(row)):
                 if i % 2: #i.e. is it a date?
-                    new_date += float(row[i])
+                    new_date = float(row[i])
                     if new_date > self.T_final: self.T_final = new_date
                     cur_node = Node(new_date,field)
                     continue
@@ -791,7 +791,7 @@ class Networks:
                     count += 1
         print "There were "+str(count_un)+" unaccounted for patients"
         print "There were "+str(count)+" non-existing patients"
-    def export_as_csv(self,field = None, round_decimals=4):
+    def export_as_csv(self,field = None, round_decimals=False):
         if field == None:
             field = self.primary_field
         if self.tag == None:
@@ -801,15 +801,8 @@ class Networks:
         export_data = []
         for key in self.Nets:
             patient_row = [key]
-            instance = 1
             for node in self.Nets[key]['Path']:
-                if instance == 1:
-                    instance = 2
-                    prev_date = node.get_date()
-                    delta = prev_date - self.T_0
-                else:
-                    delta = node.get_date() - prev_date
-                    prev_date = node.get_date()
+                delta = node.get_date() - self.T_0
                 node_info = node.get_field(field)
                 if (type(node_info) is float) and (round_decimals != False):
                     node_info = [delta, np.round(node_info,round_decimals)]
