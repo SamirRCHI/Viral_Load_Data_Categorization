@@ -11,7 +11,7 @@ Author: Samir Farooq (samir_farooq@urmc.rochester.edu)
 from Networking import *
 from VLfeats import *
 
-def load_VLpath(filename = 'VL_based_on_result.csv',
+def load_VLpath(filename = 'DataS1.csv',
                 rename_dict = {0:'HVLS',1:'RVL',2:'SLVL',3:'DSVL',4:'SHVL'}):
     VLpath = Networks(None,'result','lab_date',tag='VL') 
     # 1) We have initated the Networks -- we do not build directly because
