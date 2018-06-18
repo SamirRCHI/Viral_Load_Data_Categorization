@@ -14,8 +14,9 @@ import colorsys
 from time import time
 import math
 import operator as op
-#import os
-#import graphviz
+import os
+import sys
+import graphviz
 import pydotplus
 import webcolors
 import matplotlib.pyplot as plt
@@ -29,7 +30,7 @@ from copy import deepcopy as dc
 #from scipy import interpolate as intrp
 from scipy import stats
 #from coloring import *
-from Networking import adj_axis,apply_white_ticks
+from axishelper import adj_axis,apply_white_ticks
 from scipy.cluster.hierarchy import dendrogram,linkage
 from sklearn.metrics import confusion_matrix, roc_curve,roc_auc_score
 from sklearn.manifold import TSNE
@@ -53,7 +54,8 @@ from Centroid import Centroid
 import csv
 import types
 
-def generate_class_artists(Net,style='rectangle',which='all',fig=None):
+def generate_class_artists(Net,style='rectangle',which='all',fig=None,
+                           prior_str=''):
     if which == 'all': L = Net.classes.keys()
     elif (type(which) is list) or (type(which) is np.ndarray): L = which
     elif type(which is str) and (which in Net.classes): L = [which]
@@ -62,7 +64,7 @@ def generate_class_artists(Net,style='rectangle',which='all',fig=None):
     for c in L:
         try: clr = Net.class_colors[c]
         except KeyError: continue
-        used_labels.append(c)
+        used_labels.append(prior_str+c)
         if style=='rectangle': 
             Artists.append(patches.Rectangle((0,0),1,1,
                             facecolor=clr,linewidth=0))
@@ -78,8 +80,8 @@ def generate_class_artists(Net,style='rectangle',which='all',fig=None):
     return Artists,used_labels
 
 def add_legend(Net,fig,style='rectangle',which='all',bbox=(0.,1.02,1., .102),
-               loc=3,pad=0.5,size=14):
-    Artists,Labels = generate_class_artists(Net,style,which,fig)
+               loc=3,pad=0.5,size=14,prior_str=''):
+    Artists,Labels = generate_class_artists(Net,style,which,fig,prior_str)
     ax = fig.add_subplot(111)
     ax.legend(Artists,Labels,bbox_to_anchor=bbox,loc = loc,\
              ncol=len(Artists),mode='expand',borderaxespad=pad,fontsize=size)
@@ -357,7 +359,7 @@ def angle_based_knee_detection(X,Y,concave_down = True):
         else:
             break
     if best_point == None:
-        print "No knee detected, returning None"
+        print("No knee detected, returning None")
         return None,None
     return best_point
 
@@ -721,11 +723,21 @@ def tls(value, base_or_root = 2.0, func = 'log', add1 = True):
 
 def patient_feats(VLpath,patient_id,days = float('inf'),tform = 'l10',E=False):
     path = VLpath.Nets[patient_id]['Path']
+    if E == None:
+        try:
+            drop_complete = path.drop_complete
+        except AttributeError:
+            drop_complete = False
+    else:
+        drop_complete = E
     VL,D = path.as_list(string=False,with_dates=True,clean=True)
     if len(VL) < 3: return False
     VL,D = tls(VL,tform), np.array(D) - D[0]
     if days <= 1: days *= D[-1]
-    if E and (D[-1] <= days): return False
+    if drop_complete and (D[-1] <= days): 
+        path.drop_complete = True
+        if drop_complete != 'last not binned':
+            return False
     VL,D = VL[D <= days],D[D <= days]
     if len(VL) < 3: return False
     return feat_calc(D,VL,tls(10000000.0,tform),tls(0.0,tform))
@@ -739,7 +751,7 @@ def get_Data(VLpath,with_order=False,tform='l10',days=float('inf'),E=False):
         if not feat:
             continue
         if feat[0] > 1:
-            print path.patient_id
+            print(path.patient_id)
         for i in range(len(feat)):
             data[names[i]].append(feat[i])
         if with_order:
@@ -1175,7 +1187,7 @@ def uniformity_of_last(VLpath):
         fig = plt.figure()
         ax = fig.add_subplot(111)
         ax.hist(last)
-        print c,stats.kstest(last,'uniform')
+        print(c,stats.kstest(last,'uniform'))
 
 def log(value, base = np.e):
     if base == None:
@@ -1210,7 +1222,7 @@ def manual_assign(VLpath):
                 'e':'Emergence'},'start'
         accepted = {'s','l','h','r','e','stop',''}
         while abrv_c not in accepted:
-            abrv_c = raw_input(prmpt)
+            abrv_c = input(prmpt)
         if abrv_c == '':
             continue
         elif abrv_c == 'stop':
@@ -1502,7 +1514,7 @@ def binned_time_series(T,Y,ax,mint=0.0,maxt=1863.2,miny=1.0,maxy=7.0,
             ccmap,scttr_clr = my_cmaps(cM, cmap)
             ax.imshow(cM, interpolation='nearest', cmap = ccmap)
     else:
-        ax.imshow(cM, interpolatin='nearest', cmap = cmap)
+        ax.imshow(cM, interpolation='nearest', cmap = cmap)
     if plot_last:
         opacity = recommend_opacity(lT,lY)
         ax.scatter(lT,lY,color=scttr_clr,alpha=opacity,marker='.')
@@ -1656,8 +1668,12 @@ def MLmodel(alg = 'DecisionTree', trees = 150, w = get_feat_weights()):
         MLmodel = kNN(n_neighbors = k)
     elif alg == 'AdaBoost':
         MLmodel = ABC(n_estimators=trees)
-    elif alg == 'DecisionTree':
-        MLmodel = DTC()
+    elif 'DecisionTree' in alg:
+        mxdpth = alg[12:]
+        try:
+            MLmodel = DTC(max_depth = int(mxdpth))
+        except ValueError:
+            MLmodel = DTC()
     elif alg == 'NeuralNet':
         MLmodel = Backpropogation(max_iter = trees*50)
     elif alg[0:2] == 'Ce':
@@ -1673,8 +1689,9 @@ def MLmodel(alg = 'DecisionTree', trees = 150, w = get_feat_weights()):
         raise AssertionError('There is no such algorithm as: '+alg)
     return MLmodel
 
-def LOOCV(alg,Matrix,Classes,pred = 'predict'):
-    result,Q = [],range(len(Matrix))
+def LOOCV(alg,Matrix,Classes,pred = 'predict',verbose=True):
+    result,Q = [],list(range(len(Matrix)))
+    L = str(len(Q))
     for i in range(len(Matrix)):
         q = Q.pop()
         ML = MLmodel(alg)
@@ -1685,6 +1702,13 @@ def LOOCV(alg,Matrix,Classes,pred = 'predict'):
             r = ML.predict_proba(Matrix[q].reshape(1,-1))[0]
         result.append(r)
         Q = [q] + Q
+        if verbose:
+            F = str(i+1)
+            F = '0'*(len(L)-len(F))+F
+            print('\rCompleted '+F+' / '+L+' of LOOCV.',end='')
+            sys.stdout.flush()
+    if verbose:
+        print('')
     return np.array(result[::-1])
 
 def get_training_data(VLpath,return_dummy=False,upsample=False):
@@ -1771,6 +1795,10 @@ def trainingVL(VLpath,alg='kNN7',plot=False,use_LOOCV=False,given=False):
         M,true_c,dummy_c,T = given
     else:
         M,true_c,dummy_c,T = get_training_data(VLpath,True)
+        if alg[0:2] != 'Ce':
+            ML = MLmodel('Centroid LT')
+            ML = ML.fit(M,true_c)
+            M = ML.LT(M,True)
     if use_LOOCV:
         if plot: pred_c = LOOCV(alg,M,true_c)
         else: pred_c = LOOCV(alg,M,dummy_c,'predict_proba')
@@ -1816,8 +1844,8 @@ def generate_table2(VLpath,specifically=False,Cpredictor='radius'):
     given_unnorm = (M,true_c,dummy_c,T)
     Scores = {}
     for alg in algs:
-        print "----------------------------------------------"
-        print "Currently performing LOOCV on method: "+alg
+        print("----------------------------------------------")
+        print("Currently performing LOOCV on method: "+alg)
         if alg_num >= 7:
             A = alg
             given = given_norm
@@ -1826,16 +1854,16 @@ def generate_table2(VLpath,specifically=False,Cpredictor='radius'):
             given = given_unnorm
         s = time()
         try:
-            print A
+            print(A)
             Scores[alg] = trainingVL(VLpath,A,False,True,given)
         except AssertionError:
-            print "The center is not inside convex hull, skipping..."
+            print("The center is not inside convex hull, skipping...")
             alg_num += 1
             continue
         e = time()-s
         m,h = e / 60.0, e / 3600.0
-        print "Finished in.. "
-        print str(e)+" seconds | "+str(m)+" minutes | "+str(h)+" hours."
+        print("Finished in.. ")
+        print(str(e)+" seconds | "+str(m)+" minutes | "+str(h)+" hours.")
         alg_num += 1
     return Scores
 
@@ -1866,8 +1894,8 @@ def generate_table3(VLpath):
     w = get_feat_weights()
     M,true_c = get_training_data(VLpath)
     for alg in algs:
-        print "----------------------------------------------"
-        print "Currently finding centers and radii on method: "+alg
+        print("----------------------------------------------")
+        print("Currently finding centers and radii on method: "+alg)
         C = Centroid(alg,w)
         C = C.fit(M,true_c)
         Centroids[alg] = [C.centers_,C.radii_,C.get_inv_centers(),C.LT_]
@@ -1930,7 +1958,7 @@ def stacked_barplot(x,y,ax,C,thisC,include_thisC=False,avg=False,title=True):
     try:
         step,max_y,total_pats = x[1]-x[0],0,[]
     except IndexError:
-        print x
+        print(x)
     string_C = [str(c) for c in C]
     st_tc = str(thisC)
     for i in range(len(x)):
@@ -1962,7 +1990,7 @@ def stacked_barplot(x,y,ax,C,thisC,include_thisC=False,avg=False,title=True):
 def validatingVL(VLpath,disp='auc',alg='kNN7',upsmp=False,step=15,mxdays=1876,
                  specific_save_name = False,return_scores = False):
     auc,P=True if 'auc' in disp else False,True if mxdays == 'prop' else False
-    days_list=np.linspace(0,1,1001) if P else range(90,mxdays,step)
+    days_list=np.linspace(0,1,1001) if P else range(0,mxdays,step)
     M,true_c,dummy_c,trns = get_training_data(VLpath,True,upsmp)
     ML,C,inst = MLmodel(alg),[k for k in VLpath.classes if k != None],-1
     Clr_L = [VLpath.class_colors[trns[i]] for i in range(len(C))]
@@ -1971,15 +1999,26 @@ def validatingVL(VLpath,disp='auc',alg='kNN7',upsmp=False,step=15,mxdays=1876,
         LT = MLmodel('Centroid LT')
         LT = LT.fit(M,true_c)
         M = LT.LT(M)
-    ML,Cs,E = ML.fit(M,dummy_c),len(C),True if 'incomplete' in disp else False
+    ML,Cs,E = ML.fit(M,dummy_c),len(C),'I' if 'incomplete' in disp else False
+    if 'bin last' in disp: E = 'last not binned'
+    ev = True if 'eventual assignment' in disp else False
+    evr = True if (ev) and ('reverse' in disp) else False
+    for path in VLpath:
+        path.drop_complete = E
     scores,patients_used = [[] for i in range(len(C))],[]
-    X = 'Days Since First Viral Load Measurement'
+    X = r'Days Since First Viral Load Measurement ($t$)'
     if P: X = r'Proportion of Retained Information ($ri$)'
-    for i in range(len(days_list)):
-        vM,vC,days = [],[],days_list[i]
+    xa = r'$ri$' if P else r'$t$' 
+    incomplete = []
+    for k in range(len(days_list)):
+        if ev: incomplete.append({c:VLpath.classes[c] for c in VLpath.classes})
+        vM,vC,days = [],[],days_list[k]
         for path in VLpath:
-            feat = patient_feats(VLpath,path.patient_id,days,E=E)
-            if not feat: continue
+            feat = patient_feats(VLpath,path.patient_id,days,E=None)
+            if not feat: 
+                if ev:
+                    incomplete[k][path.Class] -= 1
+                continue
             vM.append(feat)
             if auc:
                 vC.append(dummy_to_list(trns[path.Class],len(C)))
@@ -2007,14 +2046,21 @@ def validatingVL(VLpath,disp='auc',alg='kNN7',upsmp=False,step=15,mxdays=1876,
             for i in range(len(scores)):
                 scores[i].append(empty_count(Clr_L))
             inst += 1
-            if 'abs' in disp:
+            if ('abs' in disp) or ev:
                 if type(vP) is not np.ndarray: vP = [vP]
                 for i in range(len(vC)):
-                    scores[vC[i]][inst][str(Clr_L[vP[i]])] += 1
+                    if ev:
+                        ci,pi = vP[i],vC[i]
+                        add= 1.0/incomplete[k][trns[pi]] if evr else 1
+                    else:
+                        ci,pi = vC[i],vP[i]
+                        add = 1
+                    scores[ci][inst][str(Clr_L[pi])] += add
             else:
                 for i in range(len(vC)):
                     for j in range(len(C)):
                         scores[vC[i]][inst][str(Clr_L[j])] += vP[i][j]
+    print("Finished Data Processing...")
     if return_scores == 'only':
         return scores
     if auc:
@@ -2035,25 +2081,59 @@ def validatingVL(VLpath,disp='auc',alg='kNN7',upsmp=False,step=15,mxdays=1876,
         avg = True if 'avg' in disp else False
         for i in range(len(C)):
             ax = fig.add_subplot(rows,2,i+1)
-            ax,T=stacked_barplot(days_list,scores[i],ax,Clr_L,
-                 VLpath.class_colors[trns[i]],True,avg,trns[i])
+            if evr and 'prob' not in disp:
+                for j in range(len(C)):
+                    J,T,k = [],np.zeros((len(days_list),)),0
+                    for score_of_day in scores[i]:
+                        scr = score_of_day[str(Clr_L[j])]
+                        T[k] += scr*incomplete[k][trns[j]]
+                        k += 1
+                        J.append(scr)
+                    ax.plot(days_list,J,color=Clr_L[j],lw=2)
+                    ax.set_ylim([0,1])
+                    ax.set_title(r'$x = $'+trns[i],fontsize=14)
+                    adj_axis(ax,{'standard':True})
+            else:
+                ax,T=stacked_barplot(days_list,scores[i],ax,Clr_L,
+                     VLpath.class_colors[trns[i]],True,avg,trns[i])
+                if avg:
+                    ax.set_title(r'$x = $'+trns[i],fontsize=14)
+                ax2 = fig.add_subplot(rows,2,i+1,frame_on = False)
+                ls = '--' if evr else '-'
+                lclr = [0.5,0.5,0.5] if evr else 'w'
+                lw = 1 if evr else 2
+                ax2.plot(days_list,T,ls,color=lclr,lw=lw)
+                ax2.set_xlim(left=days_list[0],right=days_list[-1])
+                adj_axis(ax2,{'all off':True})
+                adj_axis(ax2,{'labelright':True,'right spine':True,
+                              'right ytick':True,'tick labelsize':14})
             if i % 2: adj_axis(ax,{'labelleft':False,'left spine':False,
                                    'left ytick':False})
             if i<Cs-2: adj_axis(ax,{'labelbottom':False,'bottom xtick':False})
-            ax2 = fig.add_subplot(rows,2,i+1,frame_on = False)
-            ax2.plot(days_list,T,color='w',lw=2)
-            ax2.set_xlim(left=days_list[0],right=days_list[-1])
-            adj_axis(ax2,{'all off':True})
-            adj_axis(ax2,{'labelright':True,'right spine':True,
-                          'right ytick':True,'tick labelsize':14})
-        Y = ' Probability' if 'avg' in disp else ''
-        fig.text(0.08,0.5,'Membership Assignment'+Y,rotation=90,size=18,
+        I = 'Incomplete' if E else 'Complete'
+        if evr:
+            ylbl = r'Probability($x$ at '+xa+r' | $c$ in future)'
+            ylbl2 = r'Total '+I+r' $c$ States'
+        elif ev:
+            if avg:
+                ylbl = r'Probability($c$ in future | $x$ at '+xa+')'
+            else:
+                ylbl = 'Amount of Eventual Assignment'
+            ylbl2 = r'Total '+I+r' $c$ States'
+        else:
+            if avg:
+                ylbl = r'Probability($c$ at '+xa+r' | $x$ in future)'
+            else:
+                ylbl = r'Membership Assignment of $c$ given $x$ in future'
+            ylbl2 = r'Number of Patients in $c$'
+        fig.text(0.08,0.5,ylbl,rotation=90,size=18,
                  verticalalignment='center',horizontalalignment='center')
         fig.text(0.5,0.075,X,size=18,
                  horizontalalignment='center',verticalalignment='center')
-        fig.text(0.945,0.5,'Number of Patients in Class',rotation=270,size=18,
-                 verticalalignment='center',horizontalalignment='center')
-        add_legend(VLpath,fig,size=18)
+        if not evr:
+            fig.text(0.945,0.5,ylbl2,rotation=270,size=18,
+                     verticalalignment='center',horizontalalignment='center')
+        add_legend(VLpath,fig,size=18,prior_str=r'$c = $')
     plt.show()
     ncplt,P = ' incomplete' if E else '',' proportion' if P else ''
     if specific_save_name:
@@ -2066,19 +2146,19 @@ def validatingVL(VLpath,disp='auc',alg='kNN7',upsmp=False,step=15,mxdays=1876,
 # validatingVL(VLpathT,'abs avg','Centroid poly',mxdays='prop')
 
 def get_scores(VLpath):
-    print "Retrieving scores for: Centroid Polyhedron Radial Norm"
+    print("Retrieving scores for: Centroid Polyhedron Radial Norm")
     cpr = validatingVL(VLpath,'abs avg','Centroid poly',mxdays='prop',
                        return_scores = 'only')
-    print "Retrieving scores for: Decision Tree"
+    print("Retrieving scores for: Decision Tree")
     dt = validatingVL(VLpath,'abs avg','DecisionTree',mxdays='prop',
                       return_scores = 'only')
-    print "Retrieving scores for: SVM"
+    print("Retrieving scores for: SVM")
     svm = validatingVL(VLpath,'abs avg','SVC',mxdays='prop',
                        return_scores = 'only')
-    print "Retrieving scores for: k-Nearest Neighbors, k = 5"
+    print("Retrieving scores for: k-Nearest Neighbors, k = 5")
     kNN5 = validatingVL(VLpath,'abs avg','kNN5',mxdays='prop',
                         return_scores = 'only')
-    print "Retrieving scores for: Centroid Polyhedron Projected Hyp Norm"
+    print("Retrieving scores for: Centroid Polyhedron Projected Hyp Norm")
     cpp = validatingVL(VLpath,'abs avg','Centroid poly projection',
                        mxdays='prop',return_scores='only')
     Names = ['Polyhedral CMuRN','Decision Tree','SVM','k-NN,k=5',
@@ -2174,12 +2254,12 @@ def wilcoxon_test(VLpath,scores,score_names,save=False,save_table=False):
                 p_vals.append(p)
                 rng.append((Q1,Q3))
         if ni > 0:
-            print score_names[ni]
-            print '================'
+            print(score_names[ni])
+            print('================')
             for i in range(len(cs)):
-                print cs[i] + ' p-val: '+str(p_vals[i])+' w/ IQR: '+str(rng[i])
+                print(cs[i]+' p-val: '+str(p_vals[i])+' w/ IQR: '+str(rng[i]))
                 IQR_results[cs[i]].append(rng[i])
-            print ''
+            print('')
             ax = fig.add_subplot(nr,nc,ni)
             bp = ax.boxplot(bxs,labels=cs,patch_artist=True,notch=True,
                             zorder=3)
@@ -2289,25 +2369,25 @@ def rgb2gray(rgb):
         rgb = rgb/255.0
     return 0.2989 * rgb[0] + 0.5870 * rgb[1] + 0.1140 * rgb[2]
 
-def generate_DTpdf(VLpath,color_change=False,save='FigS4.pdf'):
+def generate_DTpdf(VLpath,color_change=False,save='FigS4.pdf',mxdpth=False):
     M,true_c,dummy_c,T = get_training_data(VLpath,True)
     LT = MLmodel('Centroid LT')
     LT = LT.fit(M,dummy_c)
     nM = LT.LT(M,True)
-    DT = DTC()
-    DT = DT.fit(nM,dummy_c)
+    if mxdpth:
+        DT = DTC(max_depth=mxdpth)
+    else:
+        DT = DTC()
+    DT = DT.fit(nM,true_c)
     # For new graphviz installers go to the website:
     # http://www.graphviz.org/Download_windows.php
     # Download .zip file then create a new folder (ie. Graphviz2.38)
     # Then run the next 2 lines to place it in your path:
     #os.environ["PATH"] += os.pathsep + \
     #'C:/Program Files (x86)/Graphviz2.38/bin/' #Change this line if elsewhere
-    VLpatterns = []
-    for i in range(len(VLpath.class_colors)):
-        VLpatterns.append(T[i])
     dot_data = tree.export_graphviz(DT,out_file=None,rounded=True,label='root',
-                                    feature_names=get_feat_names(),
-                                    class_names=VLpatterns,filled=True)
+                                    feature_names=get_feat_names(),filled=True,
+                                    class_names=DT.classes_)
     graph = pydotplus.graph_from_dot_data(dot_data)
     for node in graph.get_node_list():
         S = node.get_label()
@@ -2326,9 +2406,6 @@ def generate_DTpdf(VLpath,color_change=False,save='FigS4.pdf'):
         if rgb2gray(color) < 0.4:
             node.set_fontcolor('white')
     if save: graph.write_pdf(save)
-    
-#generate_DTpdf(VLpathT,
-#               {'g':'green','y':'yellow','m':'magenta','r':'red','c':'cyan'})
-
+    return DT
     
     

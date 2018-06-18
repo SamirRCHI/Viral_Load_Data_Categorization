@@ -14,6 +14,9 @@ from copy import deepcopy as dc
 import time
 import random
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle as Rect
+from matplotlib.patches import Ellipse
+from matplotlib.patches import Polygon
 from scipy.spatial import ConvexHull
 from scipy.spatial import Delaunay
 from scipy.spatial.qhull import QhullError
@@ -196,7 +199,7 @@ def equi_color(n,start = 0):
 def bubble(S,rand_c='rand',plot = True):
     if plot:
         if len(S[0]) > 2: 
-            print "Plotting only works with 2-D, will not plot!"
+            print("Plotting only works with 2-D, will not plot!")
             plot = False
     if plot:
         fig = plt.figure(figsize=(8.5,8.5))
@@ -207,7 +210,7 @@ def bubble(S,rand_c='rand',plot = True):
         C = equi_color(tot_col)
     if rand_c == 'rand': rand_c = random.sample(range(len(S)),1)[0]
     c = S[rand_c]
-    if plot: print rand_c
+    if plot: print(rand_c)
     m_T = eucM(c,S,'arg')
     T = np.array([S[m_T]])
     S2 = np.delete(S,m_T,axis=0)
@@ -273,7 +276,7 @@ def push_and_pull(Push_Points,Pull_Points,TOL=10.0**-6):
             E.append(euc(C[i-1],C[i]))
             if len(E) > 2:
                 if E[i-1] > E[i-2]:
-                    print E[i-1],E[i-2]
+                    print(E[i-1],E[i-2])
     except KeyboardInterrupt:
         fig = plt.figure(figsize=(15.5,8.5))
         ax = fig.add_subplot(111)
@@ -347,7 +350,7 @@ def solver_plot(Data,method = 'bubble'):
     x,y = D[0][0] + D[1]*np.cos(t), D[0][1] + D[1]*np.sin(t)
     ax.plot(x,y,'--',color='b')
     plt.show()
-    print D
+    print(D)
 
 def point_to_plane_dist(point,plane):
     location = np.dot(point,plane[:-1]) + plane[-1]
@@ -388,6 +391,27 @@ def projected_distance(center,point,hull):
         raise ZeroDivisionError("Minimum distance is 0? Check hull!")
     return euc(center,point)/min(distances)
 
+def quadratic_formula(a,b,c):
+    sqrt = np.sqrt(b**2 - 4*a*c)
+    return ((-b+sqrt)/(2*a), (-b-sqrt)/(2*a))
+
+def ellipsoid_distance(center,point,radii):
+    R2 = radii**2
+    GR = 1
+    for r in R2: GR *= r
+    R2 = GR / R2
+    vector = center - point
+    A = np.sum(vector**2 * R2)
+    B = 2*np.sum(point*vector*R2) - 2*np.sum(center*vector*R2)
+    C = -GR -2*np.sum(point*center*R2)+np.sum(point**2*R2)+np.sum(center**2*R2)
+    t = quadratic_formula(A,B,C)
+    T = [point + vector*t[0] , point + vector*t[1]]
+    E = [euc(point, T[0]), euc(point, T[1])]
+    return euc(center,point) / euc(center, T[np.argmin(E)])
+
+def min_max_norm(v,oldmin,oldmax,newmin,newmax):
+    return ((v - oldmin)/(oldmax - oldmin))*(newmax - newmin) + newmin
+
 class Centroid:
     def __init__(self,method = 'smallest disk',weights = 'ones',norm=True,
                  predictor = 'radius'):
@@ -399,7 +423,9 @@ class Centroid:
                         'median':self.MED,'bestrep':self.BR,'poly':self.NP,
                         'average':self.AVG,'push&pull':self.PaP}
         self.predict_call={'nearest':self.nearest,'radius':self.bndradius,
-                           'projection':self.projectedhyperplane}
+                           'projection':self.projectedhyperplane,
+                           'elliptical':self.elliptical,
+                           'closestborder':self.closestborder}
     def LT(self,x,DC = False):
         if DC: x = dc(x)
         if self.norm_ == True: return x*self.LT_[0] + self.LT_[1]
@@ -409,7 +435,7 @@ class Centroid:
                     try: x[i]=x[i]*self.LT_[i]['n'][0] + self.LT_[i]['n'][1]
                     except KeyError:
                         x[i] = x[i]*self.LT_[i]['p'][0] + self.LT_[i]['p'][1]
-                else: 
+                else:
                     try: x[i] = x[i]*self.LT_[i]['p'][0] + self.LT_[i]['p'][1]
                     except KeyError:
                         x[i]=x[i]*self.LT_[i]['n'][0] + self.LT_[i]['n'][1]
@@ -487,7 +513,7 @@ class Centroid:
         try:
             self.func_call[self.method_]()
         except KeyError:
-            print "Warning: Method is not recognized, only LT was performed."
+            print("Warning: Method is not recognized, only LT was performed.")
         return self
     def NP(self,Cs = None):
         if Cs == None: Cs = self.C_
@@ -537,6 +563,15 @@ class Centroid:
             self.centers_[c] = []
             for i in range(len(self.D_[c].T)):
                 self.centers_[c].append(np.median(self.D_[c].T[i]))
+    def learn_radii(self):
+        for c in self.C_:
+            self.radii_[c] = self.eucM(self.centers_[c],self.D_[c],True)
+    def learn_elipsoidal_radii(self):
+        for c in self.C_:
+            self.radii_[c] = np.max(np.abs(self.D_[c] - self.centers_[c]),0)
+    def learn_hull(self):
+        for c in self.C_:
+            self.hulls_[c] = ConvexHull(self.D_[c])
     def nearest(self,x,xc,c):
         return self.euc(x,xc)
     def bndradius(self,x,xc,c):
@@ -546,6 +581,18 @@ class Centroid:
             R = self.eucM(self.centers_[c],self.D_[c],True)
             self.radii_[c] = R
             return self.euc(x,xc)/R
+    def closestborder(self,x,xc,c):
+        if c not in self.radii_:
+            self.learn_elipsoidal_radii()
+        elif type(self.radii_[c]) is float:
+            self.learn_elipsoidal_radii()
+        return np.max(np.abs(x-xc)/self.radii_[c])
+    def elliptical(self,x,xc,c):
+        if c not in self.radii_:
+            self.learn_elipsoidal_radii()
+        elif type(self.radii_[c]) is float:
+            self.learn_elipsoidal_radii()
+        return ellipsoid_distance(xc,x,self.radii_[c])
     def projectedhyperplane(self,x,xc,c):
         try:
             return projected_distance(xc,x,self.hulls_[c])
@@ -591,5 +638,154 @@ class Centroid:
                 i_pos += 1
             if cond: probas.append([(S/cD[c])/wS for c in self.C_])
         return np.array(probas)
-            
+    def plot(self,feat_names = None,class_colors = {},title="Centroid Rules",
+             c2f=0.05,f2b=0.01,b2b=0.15,b2c=0.05,b_size=0.05,b2s_ratio=0.9,
+             b2u=0.005,c_size=18,f_size=10,u_size=10,s_size=12):
+        if self.radii_ == {}:
+            print("Warning: Radii must be known... calculating radii...")
+            self.learn_radii()
+        if np.all(feat_names == None):
+            feat_names = [str(i) for i in range(self.D_[self.C_[0]][0])]
+        fig = plt.figure(figsize=(8.5,12.5))
+        ax = fig.add_subplot(111)
+        y = 1.0
+        inst = 0
+        z = 0
+        for c in self.C_:
+            try:
+                color = class_colors[c]
+            except KeyError:
+                color = 'b'
+            ax.text(0,y,c,fontsize=c_size,color=color)
+            X = np.linspace(0,1.0,len(self.D_[c][0])+1)
+            sep = (X[1]-X[0])*b2s_ratio
+            if inst == 0:
+                y -= c2f
+                for i in range(len(X)-1):
+                    x = (X[i] + X[i] + sep)/2.0
+                    ax.text(x, y, feat_names[i],ha='center', fontsize = f_size)
+                y -= (f2b + b_size)
+            else:
+                y -= (c2f + b_size)
+            for i in range(len(self.D_[c][0])):
+                C,r = self.centers_[c][i],self.radii_[c]
+                if type(r) is np.ndarray:
+                    r = r[i]
+                left,right = np.max([0,C-r]),np.min([1,C+r])
+                xs = min_max_norm(left,0,1,X[i],X[i]+sep)
+                xw = min_max_norm(right,0,1,X[i],X[i]+sep) - xs
+                xc = min_max_norm(C,0,1,X[i],X[i]+sep)
+                ax.add_patch(Rect((xs,y),xw,b_size,fc=color,ec='none',
+                                     zorder=z))
+                z+=1
+                ax.add_patch(Rect((xc-(sep/100),y),sep/50,b_size,
+                                  fc=[0.831,0.686,0.216],ec='none',zorder=z))
+                z += 1
+                center = str(np.round(C,2))
+                ax.text(xc,y-b2u,center,fontsize=u_size,ha='center',va='top')
+            for i in range(len(self.D_[c][0])):
+                ax.add_patch(Rect((X[i],y),sep,b_size,
+                                  fill=False,ec=[0.8,0.8,0.8],
+                                  fc = 'none', capstyle='round',zorder=z))
+                z += 1
+            if inst != (len(self.C_)-1):
+                y -= b2c
+                inst += 1
+        ax.set_ylim(bottom=y)
+        ax.axis("off")
+        ax.set_title(title,fontsize=c_size)
+        plt.show()
         
+def Indicator(xy,width,height,left_direction=True,fc='w',
+              fill=True,ec='none'):
+    x,y = xy
+    s = 1 if left_direction else -1
+    XY = np.array([[x, y + height/2],
+                   [x + s*width/2, y + height],
+                   [x + s*width, y + height],
+                   [x + s*width/2, y + height/2],
+                   [x + s*width, y],
+                   [x + s*width/2, y]])
+    return Polygon(XY,fc=fc,fill=fill,ec=ec)
+
+def txt(x,y,s,size_val,clr,ax,r,ha='left',va='bottom'):
+    t = ax.text(x,y,s,size=size_val,color = clr,ha=ha,va=va)
+    transf = ax.transData.inverted()
+    bb = t.get_window_extent(renderer=r)
+    bb_datacoords = bb.transformed(transf)
+    x_axis = bb_datacoords.intervalx
+    y_axis = bb_datacoords.intervaly
+    coords = [x_axis[0],x_axis[1],y_axis[0],y_axis[1]]
+    return t,coords
+        
+def comparative_plot(X,y,feat_names=None,class_colors={},
+                     title="Center Comparison",c2f=0.05,f2b=0.01,b2b=0.15,
+                     b2c=0.2,b_size=0.05,b2s_ratio=0.9,b2u=0.005,bardiv=30,
+                     c_size=18,f_size=10,u_size=10,s_size=12,methods=None,
+                     save='Fig6.pdf'):
+    if np.all(feat_names == None):
+        feat_names = [str(i) for i in range(X[0])]
+    C = Centroid()
+    if np.all(methods == None):
+        methods = list(C.func_call.keys())
+    li = np.argmax([len(methods[i]) for i in range(len(methods))])
+    classes = np.unique(y)
+    D = {c:np.zeros((len(methods),len(X[0]))) for c in classes}
+    for i in range(len(methods)):
+        C = Centroid(methods[i])
+        C.fit(X,y)
+        for c,center in C.centers_.items():
+            D[c][i] = center
+    fig = plt.figure(figsize=(11.5,14.5))
+    ax = fig.add_subplot(111)
+    r = fig.canvas.get_renderer()
+    y = 1.0
+    inst = 0
+    for c,matrix in D.items():
+        try:
+            color = class_colors[c]
+        except KeyError:
+            color = 'b'
+        ax.text(0,y,c,fontsize=c_size,color=color)
+        I = np.linspace(0,1.0,len(X[0])+1)
+        sep = (I[1]-I[0])*b2s_ratio
+        if inst == 0:
+            y -= c2f
+            for i in range(len(X[0])):
+                x = (I[i] + I[i] + sep)/2.0
+                ax.text(x, y, feat_names[i],ha='center',fontsize=f_size)
+            y -= (f2b + len(methods)*b_size)
+        else:
+            y -= (c2f + len(methods)*b_size)
+        for i in range(len(X[0])):
+            ax.add_patch(Rect((I[i],y),sep,b_size*len(methods),fill=False,
+                             ec=[0.8,0.8,0.8],fc='none',capstyle='round'))
+            ax.text(I[i],y-b2u,'0',fontsize=u_size,ha='center',va='top')
+            ax.text(I[i]+sep,y-b2u,'1',fontsize=u_size,ha='center',va='top')
+            for j in range(len(methods)):
+                xc = min_max_norm(D[c][j][i],0,1,I[i],I[i]+sep)
+                if xc < I[i]:
+                    ax.add_patch(Indicator((I[i],y+j*b_size),sep/bardiv,b_size,
+                                           True,color))
+                elif xc > (I[i]+sep):
+                    ax.add_patch(Indicator((I[i]+sep,y+j*b_size),sep/bardiv,
+                                           b_size,False,color))
+                else:
+                    ax.add_patch(Rect((xc-sep/(2*bardiv),y+j*b_size),
+                                      sep/bardiv,b_size,fc=color,ec='none'))
+        for j in range(len(methods)):
+            if (inst == 0) and (j == li):
+                tx,coords=txt(I[-1],y+j*b_size,methods[j],u_size,'k',ax,r)
+            else:
+                ax.text(I[-1],y+j*b_size,methods[j],fontsize=u_size)
+        if inst != (len(classes)-1):
+            y -= b2c
+            inst += 1
+    ax.set_ylim(bottom=y-f2b)
+    ax.set_xlim(left=-0.02,right=coords[1])
+    ax.axis("off")
+    ax.set_title(title,fontsize=c_size)
+    plt.show()
+    if save:
+        fig.savefig(save,bbox_inches='tight',pad_inches=0)
+                
