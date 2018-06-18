@@ -23,6 +23,9 @@ from matplotlib import gridspec
 import numpy as np
 import operator
 from tempfile import NamedTemporaryFile
+from coloring import my_cmaps,cmap_legend
+import hierarchical as hc
+from axishelper import adj_axis
 #from FPtreeGrowth import *
 import networkx as nx
 import shutil
@@ -133,39 +136,65 @@ class Node:
     def add_field(self,fieldname,data):
         self.data[fieldname] = data
     def get_field(self,fieldname = None,string = False):
-        if fieldname == None:
+        if np.all(fieldname == None):
             fieldname = self.primary_field
-        if string:
+        if type(fieldname) is str:
             try:
                 f = self.data[fieldname]
+                if not string:
+                    return f
                 if type(f) is dict:
                     L = []
                     for key in f:
-                        for number_of_times in range(f[key]): # To adjust for self connections
+                        for number_of_times in range(f[key]):
                             if key == '':
                                 L.append('UNKNOWN')
                             else:
                                 L.append(key)
-                    f = sorted(L) # For the purpose of consistency
-                    if len(f) == 1:
-                        return f[0]
-                    else:
-                        c = ','
-                        s = '('+c.join(f)+')' # Create Multinode String
-                else:
-                    if f == '':
-                        s = 'UNKNOWN'
-                    else:
-                        s = str(f)
+                    return '('+','.join(sorted(L))+')'
+                return str(f)
             except KeyError:
-                s = 'NOT AVAILABLE'
-            return s        
+                if string:
+                    return 'NOT AVAILABLE'
+                return {}
+        if string:
+            L = []
+            for field in fieldname:
+                try:
+                    f = self.data[fieldname]
+                    if type(f) is dict:
+                        for key in f:
+                            for number_of_times in range(f[key]):
+                                if key == '':
+                                    L.append('UNKNOWN')
+                                else:
+                                    L.append(key)
+                    else:
+                        if f == '':
+                            return 'UNKNOWN'
+                        return str(f)
+                except KeyError:
+                    pass
+            if len(L) == 0:
+                return 'NOT AVAILABLE'
+            elif len(L) == 1:
+                return L[0]
+            else:
+                f = sorted(L)
+                c = ','
+                return '('+c.join(f)+')'
         else:
-            try:
-                f = self.data[fieldname]
-            except KeyError:
-                f = {}
-            return f
+            D = {}
+            for field in fieldname:
+                try:
+                    f = self.data[field]
+                    if type(f) is not dict:
+                        f = {f: 1}
+                    for key,val in f.items():
+                        D[key] = val
+                except KeyError:
+                    pass
+            return D
     def get_data(self):
         return self.data
     def has_parent(self):
@@ -272,7 +301,7 @@ class Node:
     def display(self,field = None):
         if field == None:
             field = self.primary_field
-        print self.get_field(field)
+        print(self.get_field(field))
 
 class PatientPath:
     def __init__(self,node,primary_field = 'NPI'):
@@ -289,6 +318,18 @@ class PatientPath:
         return self.length
     def __iter__(self):
         return self
+    def __next__(self):
+        if self.stage == 0:
+            self.cur_node = self.path_head
+            self.stage = 1
+            return self.cur_node
+        elif self.cur_node.get_child() == None:
+            self.stage = 0
+            self.cur_node = self.path_head
+            raise StopIteration
+        elif self.stage == 1:
+            self.cur_node = self.cur_node.get_child()
+            return self.cur_node
     def next(self):
         if self.stage == 0:
             self.cur_node = self.path_head
@@ -302,7 +343,7 @@ class PatientPath:
             self.cur_node = self.cur_node.get_child()
             return self.cur_node
     def as_list(self,field=None,string=True,with_dates=False,clean=False):
-        if field == None:
+        if np.all(field == None):
             field = self.primary_field
         path = []
         dates = []
@@ -320,7 +361,6 @@ class PatientPath:
                     item = 'UNKNOWN'
             path.append(item)
             if with_dates:
-                #D = dts.date2num(node.date)
                 dates.append(node.date)
         if with_dates:
             return path,dates
@@ -345,9 +385,9 @@ class PatientPath:
             field = self.primary_field
         node = self.path_head
         while node.get_child() != None:
-            print str(node.get_field(field))+'->'
+            print(str(node.get_field(field))+'->')
             node = node.get_child()
-        print str(node.get_field(field))
+        print(str(node.get_field(field)))
     def set_parent_Network(self,Network):
         self.parent_Network = Network
     def update_class(self,new_class):
@@ -368,7 +408,9 @@ class Networks:
     def __init__(self,filepath=None,primary_field='NPI',date='visit_date',p_id='id',
                  tag='NPIpath',lastnames=True,conversion_rules = {},
                  field_properties = {'Classification':'up','proc':'np',
-                                     'provider_name':'up','specific_proc':'u'}):
+                                     'provider_name':'up','specific_proc':'u',
+                                     'Specialization':'up'},
+                 primary_relation = False):
         self.Nets = {}
         self.Overview = {}
         self.last_update = '01/17/2018 12:24'
@@ -383,26 +425,45 @@ class Networks:
         self.idtoname = {}
         self.dupnames = set()
         self.primary_field = primary_field
+        self.fields = set()
         self.classes = {}
         self.pat_by_class = {None:{}}
         self.class_colors = {}
         self.max_len = 0
         self.cur_key = -1
+        self.keys = []
         self.max = {}
         self.min = {}
+        if type(primary_relation) is str:
+            self.find_relation = {primary_relation}
+        elif type(primary_relation) is not bool:
+            if type(primary_relation) is set:
+                self.find_relation = primary_relation
+            else:
+                self.find_relation = set(primary_relation)
+        else:
+            self.find_relation = False
+        self.primary_relation = {}
         if filepath != None:
             self.buildNetworks(filepath, lastnames)
             if conversion_rules != {}:
                 self.apply_conversion_rules(conversion_rules)
     def __iter__(self):
         return self
-    def next(self):
+    def __next__(self):
         self.cur_key += 1
         if self.cur_key == len(self.Nets.keys()):
             self.cur_key = -1
             raise StopIteration
         else:
-            return self.Nets[self.Nets.keys()[self.cur_key]]['Path']
+            return self[self.keys[self.cur_key]]
+    def next(self):
+        self.cur_key += 1
+        if self.cur_key == len(self.keys):
+            self.cur_key = -1
+            raise StopIteration
+        else:
+            return self[self.keys[self.cur_key]]
     def __getitem__(self,key):
         return self.Nets[key]['Path']
     def get_max_len(self):
@@ -462,7 +523,7 @@ class Networks:
                 self.max[f] = M
                 self.min[f] = m
             else:
-                print "Sorry, only 'int' and 'float' are accepted as conversions at this time."
+                print("Sorry, only 'int' and 'float' are accepted as conversions at this time.")
     def count_Overview(self):
         for path in self:
             self.Overview[path.patient_id] = {}
@@ -514,24 +575,32 @@ class Networks:
             return (singlcount,multicount)
         else:
             raise UserWarning
-            print "Invalid count_style inputted- returning both"
+            print("Invalid count_style inputted- returning both")
             return singlcount,multicount                       
     def set_tag(self,tag):
         self.tag = tag
-    def makeNode(self,h,r, seen_a_name):
+    def makeNode(self,h,r, seen_a_name, ):
         node = Node(r[h[self.date]], self.primary_field)
         node.tag = self.tag
         if seen_a_name != False:
             r[seen_a_name] = self.idtoname[r[h[self.primary_field]]]
+        prim = r[h[self.primary_field]]
         for item in h:
             if (item != self.date) and (item != self.p_id):
                 if r[h[item]] == '':
                     appending_item = 'UNKNOWN'
                 else:
                     appending_item = r[h[item]]
-                node.add_field(item,appending_item)           
+                self.fields.add(item)
+                node.add_field(item,appending_item)
+                if self.find_relation:
+                    if item in self.find_relation:
+                        try:
+                            self.primary_relation[prim][item] = appending_item
+                        except KeyError:
+                            self.primary_relation[prim] = {item:appending_item}
         return node
-    def buildNetworks(self, filepath, lastnames = True):
+    def buildNetworks(self, filepath, lastnames=True):
         if type(filepath) is str:
             f = open(filepath,'r')
             fcsv = csv.reader(f)
@@ -623,6 +692,7 @@ class Networks:
         self.classes[None] = len(self.Nets)
         f.close()
         self.Plot = Plot_Network(self)
+        self.keys = list(self.Nets.keys())
     def build_from_exported_csv(self,filepath,conversion=None,fprop='n'):
         if type(filepath) is str:
             f = open(filepath,'r')
@@ -670,6 +740,7 @@ class Networks:
         self.classes[None] = len(self.Nets)
         f.close()
         self.Plot = Plot_Network(self)
+        self.keys = list(self.Nets.keys())
     def add_class_nodes(self,filepath):
         if type(filepath) is str:
             f = open(filepath,'r')
@@ -716,7 +787,7 @@ class Networks:
             self.class_colors = dict_or_input
         else:
             for c in self.classes:
-                self.class_colors[c] = raw_input('Color of '+str(c)+': ')
+                self.class_colors[c] = input('Color of '+str(c)+': ')
     def class_lists(self,field = None,Tau = float('inf'),as_dict = True,string=True):
         if field == None:
             field = self.primary_field
@@ -769,8 +840,8 @@ class Networks:
             except KeyError:
                 count_nonexisting += 1
         if print_result:
-            print "There were "+str(self.classes[None])+" unaccounted for patients"
-            print "There were "+str(count_nonexisting)+" non-existing patients"
+            print("There were "+str(self.classes[None])+" unaccounted for patients")
+            print("There were "+str(count_nonexisting)+" non-existing patients")
     def write_classes(self,filename):
         id_class = [['id','class']]
         for path in self:
@@ -789,8 +860,8 @@ class Networks:
                     count_un -= 1
                 except KeyError:
                     count += 1
-        print "There were "+str(count_un)+" unaccounted for patients"
-        print "There were "+str(count)+" non-existing patients"
+        print("There were "+str(count_un)+" unaccounted for patients")
+        print("There were "+str(count)+" non-existing patients")
     def export_as_csv(self,field = None, round_decimals=False):
         if field == None:
             field = self.primary_field
@@ -855,11 +926,118 @@ class Networks:
             display_num = len(self.Nets.keys())
         key_num = 1
         for key in self.Nets:
-            print "--- Path of: "+str(key)+" ---"
+            print("--- Path of: "+str(key)+" ---")
             self.Nets[key]['Path'].display(field)
             if key_num == display_num:
                 break
             key_num += 1
+            
+class Graph:
+    def __init__(self, algorithm='traceroute', tau = 365):
+        self.algorithm = algorithm
+        self.tau = tau
+        self.Nodes,self.iNode,self.Edges,self.Matrix = {},{},{},{}
+        self.N_alg_func = {'traceroute':self.traceroute,
+                           'multinode':self.multinode}
+    def build_from_Networks(self,Networks,field=None,by_class=True):
+        if by_class:
+            for c in Networks.classes: 
+                self.Edges[c] = []
+                self.Nodes[c] = {}
+                self.iNode[c] = {}
+        else: 
+            self.Edges[None] = []
+            self.Nodes[None] = {}
+            self.iNode[None] = {}
+        self.N_alg_func[self.algorithm](Networks,field,by_class)
+    def node_to_list(self, node, Class, field=None):
+        data = node.data[field]
+        L = []
+        if type(data) is str:
+            L = [data]
+        else:
+            for key,amount in data.items():
+                for v in range(amount):
+                    L.append(key)
+        for l in L:
+            if l not in self.Nodes[Class]:
+                i = len(self.Nodes[Class])
+                self.Nodes[Class][l] = i
+                self.iNode[Class][i] = l
+        return L
+    def edges_to_matrix(self):
+        for Class,edges in self.Edges.items():
+            mat = np.zeros((len(self.Nodes[Class]),len(self.Nodes[Class])))
+            for edge in edges:
+                mat[self.Nodes[Class][edge[0]],self.Nodes[Class][edge[1]]] += 1
+            self.Matrix[Class] = mat
+    def traceroute(self,Networks,field,by_class):
+        for path in Networks:
+            first_node,prv_node = True,path.path_head
+            Class = path.Class if by_class else None
+            for node in path:
+                if first_node or ((node.date - prv_node.date) > self.tau):
+                    prv_node = node
+                    try:
+                        pL = self.node_to_list(prv_node,Class,field)
+                    except KeyError:
+                        continue
+                    first_node = False
+                    continue
+                try:
+                    L = self.node_to_list(node,Class,field)
+                except KeyError:
+                    continue
+                for pl in pL:
+                    for l in L:
+                        self.Edges[Class].append([pl,l])
+        self.edges_to_matrix()
+    def multinode(self,Networks,field,by_class):
+        for path in Networks:
+            Class = path.Class if by_class else None
+            for node in path:
+                try:
+                    L = self.node_to_list(node,Class,field)
+                except KeyError:
+                    continue
+                for i in range(len(L)):
+                    for j in range(i+1,len(L)):
+                        self.Edges[Class].append([L[i],L[j]])
+                        self.Edges[Class].append([L[j],L[i]])
+        self.edges_to_matrix()
+    def plot_matrix(self,Class=None, sort_by_dend=True, log=True):
+        self.pMatrix = dc(self.Matrix[Class])
+        L = [self.iNode[Class][i] for i in range(len(self.pMatrix))]
+        if log:
+            self.pMatrix = np.log(self.pMatrix+1)
+        oldmin,oldmax = np.min(self.pMatrix),np.max(self.pMatrix)
+        self.nMatrix = self.pMatrix / oldmax
+        fig = plt.figure(figsize=(15.5,8.5))
+        if sort_by_dend:
+            Z = linkage(self.pMatrix,'ward')
+            thresh = None if type(sort_by_dend) is bool else sort_by_dend
+            self.LC = hc.linkage_clustering(Z,thresh,None,L)
+            ax = fig.add_subplot(1,9,1)
+            r = fig.canvas.get_renderer()
+            self.LC.plot_dendrogram(ax, False, None, True, False, 'left', r)
+            adj_axis(ax,{'all off':True})
+            pos0 = ax.get_position()
+            pad = pos0.x0 + pos0.width
+            ax = fig.add_subplot(1,8,2)
+        else:
+            ax = fig.add_subplot(1,8,1)
+            pad = 0
+        cmap = my_cmaps(self.nMatrix,'sharpautumn')
+        self.nMatrix = self.nMatrix[self.LC.lo,:]
+        self.nMatrix = self.nMatrix[:,self.LC.lo]
+        ax.imshow(self.nMatrix, interpolation='nearest', cmap = cmap)
+        pos = ax.get_position()
+        ax.set_position([pad,pos.y0,0.7,pos.height])
+        title = self.algorithm[0].capitalize() + self.algorithm[1:]
+        adj_axis(ax, {'all off':True, 'title':(title,14)})
+        ax = fig.add_subplot(1,9,9)
+        cmap_legend(ax, cmap, [oldmin, oldmax], False, 5, 'exp', 1, 14)
+        plt.show()
             
 def merge_Networks(parent_Network, other_Networks = [], tag_colors = []):
     if len(tag_colors) > 0:
@@ -893,8 +1071,8 @@ def merge_Networks(parent_Network, other_Networks = [], tag_colors = []):
         nodes = np.array(nodes)
         I = np.argsort(dates)
         dates,nodes = dates[I],nodes[I]
-        path.head = nodes[0]
-        prv_node,path.length = path.head,1
+        path.path_head = nodes[0]
+        prv_node,path.length = path.path_head,1
         prv_node.tag = {prv_node.tag}
         for i in range(len(nodes))[1:]:
             cur_node = nodes[i]
@@ -903,12 +1081,34 @@ def merge_Networks(parent_Network, other_Networks = [], tag_colors = []):
                 prv_node.tag.add(cur_node.tag.pop())
                 for k,t in cur_node.data.items():
                     prv_node.data[k] = t
+                    parent_Network.fields.add(k)
             else:
                 cur_node.parent = prv_node
                 prv_node.child = cur_node
                 prv_node = cur_node
                 path.update_len()
                 
+def test_merge(parent_Network, other_Networks, pats = 25, ps = []):
+    p = np.random.choice(list(parent_Network.Nets.keys()),pats,False)
+    for i in range(len(ps)):
+        p[i] = ps[i]
+    fig = plt.figure(figsize=(15.5,25.5))
+    ax = fig.add_subplot(111)
+    y = 0
+    for i in range(pats):
+        D = parent_Network[p[i]].get_dates()
+        ax.plot([D[0],D[-1]],[y,y],lw=0.5)
+        ax.scatter(D,[y]*len(D))
+        ax.text(D[-1],y-(len(other_Networks)/2),p[i],ha='left',va='center')
+        for O in other_Networks:
+            y -= 1
+            try:
+                D = O[p[i]].get_dates()
+                ax.plot([D[0],D[-1]],[y,y],lw=0.5)
+                ax.scatter(D,[y]*len(D))
+            except KeyError:
+                pass
+        y -= 3
 
 def class_transfer(Info_Network,Updating_Network):
     for path in Info_Network:
@@ -996,6 +1196,38 @@ def rename_classes(Net,old_to_new_dict):
         Net.class_colors[old_to_new_dict[key]] = color
     return Net
 
+def clear_classes(Net):
+    for path in Net:
+        path.update_class(None)
+        
+def one_patient_2_three_column_format(csv_file, new_filename):
+    with open(new_filename,'w') as b:
+        a = csv.writer(b, lineterminator='\n')
+        with open(csv_file,'r') as f:
+            fcsv = csv.reader(f)
+            for row in fcsv:
+                iterations = int((len(row)-1)/2)
+                for i in range(iterations):
+                    a.writerow([row[0],row[2*i+1],row[2*i+2]])
+                    
+def three_column_2_one_patient_format(csv_file, new_filename):
+    with open(new_filename,'w') as b:
+        a = csv.writer(b, lineterminator='\n')
+        with open(csv_file,'r') as f:
+            fcsv = csv.reader(f)
+            first = True
+            for row in fcsv:
+                if first:
+                    newrow = [row[0], row[1], row[2]]
+                    first = False
+                elif row[0] == newrow[0]:
+                    newrow.append(row[1])
+                    newrow.append(row[2])
+                else:
+                    a.writerow(newrow)
+                    newrow = [row[0], row[1], row[2]]
+            a.writerow(newrow)
+
 #NPIpath = Networks('NPIpath.csv')
 
 
@@ -1021,7 +1253,7 @@ def circle_intersection(r,a=0,b=0,c=0,d=0):
          2*a2*d2-4*a*c3-4*a*d2*c+2*a2*b2+b4-2*b2*d2+c4+2*c2*d2+d4
     Qb = 8*a*b*c-4*b*c2-4*a2*d+8*a*d*c-4*a2*b+4*b2*d-4*b3-4*c2*d-4*d3+4*b*d2
     Qa = 4*a2-8*a*c+4*c2+4*d2-8*b*d+4*b2
-    print Qa,Qb,Qc
+    print(Qa,Qb,Qc)
     
     y1,y2 = quadratic_eq(Qa,Qb,Qc)
     
@@ -1114,7 +1346,7 @@ def theta_intersect(center,radius,intersection):
     elif ((ct2 - st1)**2 < TOL) or ((ct2 - st2)**2 < TOL):
         return ct2
     else:
-        print ct1,ct2,st1,st2
+        print(ct1,ct2,st1,st2)
         raise ValueError("No theta found, check inputs!")
         
 def arrow_head_coords(center,slope,length):
@@ -1548,122 +1780,4 @@ def adding_patient_info(Network,Plot_Network,info_type = 'complexity'):
 #NPIpath = adding_patient_info(NPIpath,pNPIpath2)
 #NPIpath3 = adding_patient_info(NPIpath3,pNPIpath2)
 
-def adj_axis(ax,kwargs):
-    for param,val in kwargs.items():
-        if param == 'spines':
-            ax.spines['right'].set_visible(val)
-            ax.spines['top'].set_visible(val)
-            ax.spines['bottom'].set_visible(val)
-            ax.spines['left'].set_visible(val)
-        elif param == 'left spine':
-            ax.spines['left'].set_visible(val)
-        elif param == 'bottom spine':
-            ax.spines['bottom'].set_visible(val)
-        elif param == 'top spine':
-            ax.spines['top'].set_visible(val)
-        elif param == 'right spine':
-            ax.spines['right'].set_visible(val)
-        elif param == 'yticks':
-            ax.set_yticks(val)
-        elif param == 'yticklabels':
-            if type(val) is tuple:
-                ax.set_yticklabels(val[0])
-                ax.tick_params(axis='y',labelsize = val[1])
-            else:
-                ax.set_yticklabels(val)
-        elif param == 'xticks':
-            ax.set_xticks(val)
-        elif param == 'xticklabels':
-            if type(val) is tuple:
-                ax.set_xticklabels(val[0])
-                ax.tick_params(axis='x',labelsize = val[1])
-            else:
-                ax.set_xticklabels(val)
-        elif param == 'tick labelsize':
-            ax.tick_params(axis='both',which='major',labelsize = val)
-        elif param == 'xtick labelsize':
-            ax.tick_params(axis='x',labelsize = val)
-        elif param == 'ytick labelsize':
-            ax.tick_params(axis='y',labelsize = val)
-        elif param == 'top xtick':
-            ax.tick_params(axis = 'x',which='both',top=val)
-        elif param == 'bottom xtick':
-            ax.tick_params(axis = 'x',which='both',bottom=val)
-        elif param == 'left ytick':
-            ax.tick_params(axis='y',which='both',left=val)
-        elif param == 'right ytick':
-            ax.tick_params(axis='y',which='both',right=val)
-        elif param == 'all ticks':
-            ax.tick_params(axis='x',which='both',top=val,bottom=val)
-            ax.tick_params(axis='y',which='both',left=val,right=val)
-        elif param == 'labelbottom':
-            ax.tick_params(axis='x',labelbottom=val)
-        elif param == 'labelleft':
-            ax.tick_params(axis='y',labelleft=val)
-        elif param == 'labelright':
-            ax.tick_params(axis='y',labelright=val)
-        elif param == 'labeltop':
-            ax.tick_params(axis='x',labeltop=val)
-        elif param == 'xlabel':
-            if type(val) is tuple:
-                if len(val) == 3:
-                    ax.set_xlabel(val[0],size=val[1],labelpad=val[2])
-                else:
-                    ax.set_xlabel(val[0],size=val[1])
-            else:
-                ax.set_xlabel(val)
-        elif param == 'ylabel':
-            if type(val) is tuple:
-                if len(val) == 3:
-                    ax.set_ylabel(val[0],size=val[1],labelpad=val[2])
-                else:
-                    ax.set_ylabel(val[0],size=val[1])
-            else:
-                ax.set_ylabel(val)
-        elif param == 'title':
-            if type(val) is tuple:
-                ax.set_title(val[0],size=val[1])
-            else:
-                ax.set_title(val)
-        elif param == 'standard':
-            val = not val
-            ax.spines['right'].set_visible(val)
-            ax.spines['top'].set_visible(val)
-            ax.tick_params(axis = 'both',which='major',top=val,right=val)
-        elif param == 'neat':
-            neat_mode,r,c,tp,i = val
-            ax.spines['right'].set_visible(False)
-            ax.spines['top'].set_visible(False)
-            if ((i-1) % c) and ('y' in neat_mode):
-                ax.tick_params(axis='y',labelleft=False,left=False)
-                ax.spines['left'].set_visible(False)
-            if (not ((i > (c*(r-1))) or (i + c > tp))) and ('x' in neat_mode):
-                ax.tick_params(axis='x',labelbottom=False,bottom=False)
-                if 'y' not in neat_mode:
-                    ax.spines['bottom'].set_visible(False)
-        elif param == 'all off':
-            val = not val
-            ax.spines['right'].set_visible(val)
-            ax.spines['top'].set_visible(val)
-            ax.spines['bottom'].set_visible(val)
-            ax.spines['left'].set_visible(val)
-            ax.tick_params(axis='both',which='major',top=val,right=val,bottom=val,left=val,
-                           labelleft=val,labelbottom=val)
-                           
-def apply_white_ticks(ax,side = 'y'):
-    if side == 'y':
-        adj_axis(ax,{'bottom spine':False,'top spine':False,
-                     'right spine':False,'top xtick':False,'bottom xtick':False,
-                     'right ytick':False,'left ytick':False})
-        x1,x2 = ax.get_xlim()
-        Y = ax.get_yticks()
-        for y in Y:
-            ax.plot([x1,x2],[y,y],color='w',lw=1)
-    elif side == 'x':
-        adj_axis(ax,{'left spine':False,'top spine':False,
-                     'right spine':False,'top xtick':'off','bottom xtick':'off',
-                     'right ytick':'off','left ytick':'off'})
-        y1,y2 = ax.get_ylim()
-        X = ax.get_xticks()
-        for x in X:
-            ax.plot([x,x],[y1,y2],color='w',lw=1)
+
