@@ -18,7 +18,9 @@ This is the script file containing all of the functions involved in our viral lo
 Networking.py
 _____________
 
-This is a data structure to handle patient paths. Read Networking.py documentation.
+This is a data structure to handle patient paths. Read Networking.py documentation. 
+
+Note: DataS1.csv is in a "one patient format" - which is essential for the load to work. Some Viral Load files may be in "three column format" which will throw hidden errors in the loading procedure! In order to fix this, use the function "three_column_2_one_patient_format" to change the "three column format" into a "one patient format".
 
 
 
@@ -56,3 +58,8 @@ The function generate_figure takes as input: VLpath, fig_list, and supp_fig_list
 -VLpath is the viral load patient paths loaded from the function: load_VLpath (line 22).
 -fig_list takes a list of integers corresponding to the figure the user wants to generate (in regards to the figure order of the corresponding paper to these script files).
 -supp_fig_list takes a list of integers corresponding to the supplementary figure the user wants to generate (in regards to the supplementary figure order of the corresponding paper to these script files).
+
+
+
+___________________________________________________________________________________________________________________________
+Note: DataS1.csv is in a "one patient format" - which is essential for the load to work. Some Viral Load files may be in "three column format" which will throw hidden errors in the loading procedure! In order to fix this, use the function "three_column_2_one_patient_format" to change the "three column format" into a "one patient format".
