@@ -9,6 +9,8 @@ Author: Samir Farooq (samir_farooq@urmc.rochester.edu)
 
 Documentation Available on GitHub
 """
+from Networking import Networks,three_column_2_one_patient_format as t2o
+import hierarchical as hc
 import numpy as np
 import colorsys
 from time import time
@@ -21,6 +23,8 @@ import pydotplus
 import webcolors
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from matplotlib.patches import FancyArrowPatch as Farrow
+from matplotlib.patches import Circle as Circ
 from matplotlib.colors import LinearSegmentedColormap
 import random as random
 from mpl_toolkits.mplot3d import Axes3D
@@ -53,6 +57,8 @@ from sklearn.linear_model import LogisticRegression
 from Centroid import Centroid
 import csv
 import types
+import networkx as nx
+
 
 def generate_class_artists(Net,style='rectangle',which='all',fig=None,
                            prior_str=''):
@@ -963,13 +969,16 @@ class linkage_clustering:
 
 def auto_cluster(Net,title='Dendrogram',cluster_threshold = 3.8,
                  update_class = False,show_feat_plot = False,transform='l10',
-                 include_heatmap = False,OT=True,lw = 0.5,fs=(15.5,8.5),
-                 save=False):
+                 include_heatmap = False,OT='pos only',lw = 0.5,fs=(15.5,8.5),
+                 save=False,colors='cbfriendly'):
     f_n,weights = get_feat_names(),get_feat_weights()
     VL_feature_matrix,dat,p_ids = get_Matrix(Net,OT,True,True,transform)
     Z = linkage(VL_feature_matrix,'ward')
-    LC = linkage_clustering(Z,cluster_threshold,p_ids)
-    LC.generate_cluster_colors()
+    LC = hc.linkage_clustering(Z,cluster_threshold,None,p_ids)
+    if type(colors) is str:
+        LC.generate_cluster_colors()
+    else:
+        LC.generate_cluster_colors(False,colors)
     if update_class:
         for i in range(len(p_ids)):
             p = p_ids[i]
@@ -2407,5 +2416,208 @@ def generate_DTpdf(VLpath,color_change=False,save='FigS4.pdf',mxdpth=False):
             node.set_fontcolor('white')
     if save: graph.write_pdf(save)
     return DT
+
+def quadratic_eq(a,b,c):
+    return (-b + np.sqrt(b**2-4*a*c))/(2*a), (-b - np.sqrt(b**2-4*a*c))/(2*a)
+
+def patched_scatter(ax,x,y,radius,clr='b',border_filling=1.0/20,
+                    return_dim = False):
+    xmn,xmx,ymn,ymx = float('inf'),-float('inf'),float('inf'),-float('inf')
+    if (type(clr) is str) or (type(clr[0]) is int) or (type(clr[0]) is float):
+        colors = [clr for i in range(len(x))]
+    else:
+        colors = clr
+    for i in range(len(x)):
+        ax.add_patch(Circ((x[i],y[i]),radius,facecolor=colors[i]))
+        if (x[i] - radius) < xmn: xmn = x[i]-radius
+        if (x[i] + radius) > xmx: xmx = x[i]+radius
+        if (y[i] - radius) < ymn: ymn = y[i]-radius
+        if (y[i] + radius) > ymx: ymx = y[i]+radius
+    xL = [xmn - (xmx - xmn)*border_filling, xmx + (xmx - xmn)*border_filling]
+    yL = [ymn - (ymx - ymn)*border_filling, ymx + (ymx - ymn)*border_filling]
+    if (xL[1]-xL[0]) >= (yL[1]-yL[0]):
+        ax.set_xlim(xL)
+        adj = ((xL[1]-xL[0])-(yL[1]-yL[0]))/2.0
+        ax.set_ylim([yL[0]-adj,yL[1]+adj])
+    else:
+        ax.set_ylim(yL)
+        adj = ((yL[1]-yL[0])-(xL[1]-xL[0]))/2.0
+        ax.set_xlim(xL[0]-adj,xL[1]+adj)
+    if return_dim:
+        return xL,yL
+
+def dist(xy1, xy2):
+    xy1,xy2 = np.array(xy1),np.array(xy2)
+    return np.sqrt(np.sum((xy2-xy1)**2))
+
+def curved_arrow(ax, xy1, xy2, offset_radius = 0, curvature = 0.3,
+                 width = 1, color = 'k', alpha = 1, head_len = 1,
+                 head_width = 0.25):
+    m = (xy2[1] - xy1[1])/(xy2[0]-xy1[0])
+    b = xy2[1] - m*xy2[0]
+    tx1,tx2 = quadratic_eq(m**2+1,2*m*(b-xy1[1])-2*xy1[0],
+                         xy1[0]**2+(b-xy1[1])**2-offset_radius**2)
+    ty1,ty2 = m*tx1+b,m*tx2+b
+    d1,d2 = dist((tx1,ty1),xy2),dist((tx2,ty2),xy2)
+    if d1 < d2:
+        x1,y1 = tx1,ty1
+    else:
+        x1,y1 = tx2,ty2
+    tx1,tx2 = quadratic_eq(m**2+1,2*m*(b-xy2[1])-2*xy2[0],
+                         xy2[0]**2+(b-xy2[1])**2-offset_radius**2)
+    ty1,ty2 = m*tx1+b,m*tx2+b
+    d1,d2 = dist((tx1,ty1),xy1),dist((tx2,ty2),xy1)
+    if d1 < d2:
+        x2,y2 = tx1,ty1
+    else:
+        x2,y2 = tx2,ty2
+    cstyle = "arc3,rad="+str(curvature)
+    style="Simple,tail_width="+str(width)+",head_width="+str(head_width)+\
+        ",head_length="+str(head_len)
+    ax.add_patch(Farrow((x1,y1),(x2,y2),connectionstyle=cstyle,
+                        color=color,arrowstyle=style, alpha = alpha))
     
-    
+def self_loop_arrow(ax,xy,offset_radius,width=1,color='k',start_degree=90,
+                    delta_degree=90,curvature=1.6,alpha=1,head_len=1,
+                    head_width = 0.25):
+    if type(start_degree) is int:
+        start_degree = np.pi*start_degree/180
+    if type(delta_degree) is int:
+        delta_degree = np.pi*delta_degree/180
+    x1 = offset_radius*np.cos(start_degree)+xy[0]
+    y1 = offset_radius*np.sin(start_degree)+xy[1]
+    x2 = offset_radius*np.cos(start_degree+delta_degree)+xy[0]
+    y2 = offset_radius*np.sin(start_degree+delta_degree)+xy[1]
+    cstyle = "arc3,rad="+str(curvature)
+    style="Simple,tail_width="+str(width)+",head_width="+str(head_width)+\
+        ",head_length="+str(head_len)
+    ax.add_patch(Farrow((x1,y1),(x2,y2),connectionstyle=cstyle,
+                        color=color,arrowstyle=style,alpha=alpha))
+
+def draw_graph(G,ax=None,node_color={},font_color={},node_size_factor=1./20,
+               fig_size_adjust=0.125):
+    retfig = False
+    if ax == None:
+        fig = plt.figure(figsize=(8,8))
+        ax = fig.add_subplot(111)
+        retfig = True
+    pos = nx.spring_layout(G)
+    P,clrs,lbls,fclrs = [],[],[],{}
+    for c in pos:
+        P.append(pos[c])
+        try:
+            clrs.append(node_color[c])
+        except KeyError:
+            clrs.append('b')
+        try:
+            fclrs[c] = font_color[c]
+        except KeyError:
+            fclrs[c] = 'k'
+        lbls.append(c)
+    P = np.array(P)
+    mnx,mxx,mny,mxy=np.min(P[:,0]),np.max(P[:,0]),np.min(P[:,1]),np.max(P[:,1])
+    r = np.sqrt((mxy-mny)**2+(mxx-mnx)**2)*(node_size_factor)
+    patched_scatter(ax, P[:,0], P[:,1], r)
+    for u,v in G.edges():
+        w = G[u][v]['weight']
+        width,alpha = w*5,w**0.8
+        hw = 1*5*2 # head_width = maximum_weight*scale_factor*second_factor
+        if u == v:
+            self_loop_arrow(ax,pos[u],r,width,'k',45,90,1.6,
+                            alpha,r*100,hw)
+        else:
+            curved_arrow(ax, pos[u], pos[v], r, 0.3, width, 'k',
+                         alpha,r*150,hw)
+    patched_scatter(ax, P[:,0], P[:,1], r, clrs)
+    for l in lbls:
+        ax.text(pos[l][0],pos[l][1],l,ha='center',va='center',color=fclrs[l],
+                fontsize=14)
+    YL = ax.get_ylim()[1]
+    ax.set_ylim(top = YL*(1+fig_size_adjust))
+    ax.axis('off')
+    if retfig:
+        return fig
+    return ax
+
+def state_transfer(VLpath, alg = 'kNN5'):
+    M,true_c = get_training_data(VLpath)
+    ML = MLmodel(alg)
+    params = alg.split(' ')
+    if params[0] != 'Centroid':
+        LT = MLmodel('Centroid LT')
+        LT = LT.fit(M,true_c)
+        M = LT.LT(M)
+    ML.fit(M, true_c)
+    class_states = {}
+    C = np.array(list(VLpath.classes.keys()))
+    i2C = C[C != None]
+    C2i = {i2C[i]:i for i in range(len(i2C))}
+    TraceRoute = np.zeros((len(i2C),len(i2C)))
+    md = 0
+    for path in VLpath:
+        if path.Class == None:
+            continue
+        VL,D = path.as_list(string=False,with_dates=True,clean=True)
+        VL,D = tls(VL,'l10'), np.array(D) - D[0]
+        states = []
+        for i in range(3,len(VL)+1):
+            feat = feat_calc(D[:i],VL[:i],np.log10(10000010),1.0)
+            states.append(ML.predict(LT.LT([feat]))[0])
+        for i in range(1,len(states)):
+            TraceRoute[C2i[states[i-1]],C2i[states[i]]] += 1
+        class_states[path.patient_id] = states,D[2:]
+        if D[-1] > md: md = D[-1]
+    G = nx.DiGraph()
+    for i in range(len(i2C)):
+        for j in range(len(i2C)):
+            G.add_edge(i2C[i],i2C[j],weight=
+                       TraceRoute[i,j]/np.sum(TraceRoute[i,:]))
+    return G,TraceRoute,class_states,i2C
+
+def state_observation(G,CS,VLpath,T,i2C):
+    count,C,C2i = 0,i2C,{i2C[i]:i for i in range(len(i2C))}
+    days = np.linspace(0,900,900)
+    state_count = {c:np.zeros((len(days),)) for c in C}
+    predicted = np.zeros((len(i2C),len(days)))
+    nT = np.zeros(np.shape(T))
+    for i in range(len(T)):
+        nT[i,:] = T[i,:]/np.sum(T[i,:])
+    for p in CS:
+        states, D = CS[p]
+        D -= D[0]
+        if D[-1] < 900:
+            continue
+        count += 1
+        states = np.array(states)
+        for i in range(len(days)):
+            state_count[states[D <= days[i]][-1]][i] += 1
+        state,i = np.zeros((5,)),0
+        state[C2i[states[0]]] += 1
+        for j in range(len(states)):
+            while (i < len(days)) and (days[i] <= D[j]):
+                predicted[:,i] += state
+                i += 1
+            if i >= len(days):
+                break
+            state = np.dot(state, nT)
+    print(str(count)+" / "+str(len(CS)))
+    fig = plt.figure(figsize=(16,6))
+    ax = fig.add_subplot(121)
+    for c in C:
+        l, = ax.plot(days,state_count[c],color=VLpath.class_colors[c],lw=2)
+        #p, = ax.plot(days,predicted[C2i[c]],'--',color=VLpath.class_colors[c],
+        #        alpha=0.8)
+    l, = ax.plot([-1,-1],[0,0],lw=2,color='gray',label='Observed')
+    #p, = ax.plot([-1,-1],[0,0],'--',color='gray',label='Predicted')
+    ax.set_ylim(bottom=0)
+    #ax.legend(handles=[l,p],loc='center left',fontsize=14)
+    adj_axis(ax, {'xlabel':('Days Since First VL State Classification',16),
+                  'ylabel':('Patients',16),'xtick labelsize':14,
+                  'ytick labelsize':14, 'standard':True})
+    ax = fig.add_subplot(122)
+    draw_graph(G,ax,VLpath.class_colors,{'RVL':'w'},1.0/18)
+    fig.text(0.05, 0.875, 'A)', fontsize=18)
+    fig.text(0.55, 0.875, 'B)', fontsize=18)
+    plt.show()
+    fig.savefig('Fig7.pdf',bbox_inches='tight',pad_inches=0)
+            

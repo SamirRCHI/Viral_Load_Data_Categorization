@@ -13,7 +13,7 @@ from VLfeats import *
 import Centroid as cntoid
 import DTrules as dtr
 
-def load_VLpath(filename = 'VL_based_on_result.csv',
+def load_VLpath(filename = 'DataS1.csv', #The csv must be "one patient format"!
                 rename_dict = {0:'HVLS',1:'RVL',2:'SLVL',3:'DSVL',4:'SHVL'}):
     VLpath = Networks(None,'result','lab_date',tag='VL') 
     # 1) We have initated the Networks -- we do not build directly because
@@ -44,10 +44,6 @@ def generate_figure(VLpath,fig_list=range(1,10),supp_fig_list=range(1,10)):
         elif fig_num == 5:
             comparative_patterns(VLpath,'teal,black','Fig5.pdf')
         elif fig_num == 6:
-            M,true_c = get_training_data(VLpath)
-            cntoid.comparative_plot(M,true_c,get_feat_names(),
-                                    VLpath.class_colors)
-        elif fig_num == 7:
             # Note: Decision Rules may be slightly different each time!
             M,true_c = get_training_data(VLpath) # First get the data
             Centroid = MLmodel('Centroid poly')
@@ -58,38 +54,23 @@ def generate_figure(VLpath,fig_list=range(1,10),supp_fig_list=range(1,10)):
             DT.fit(nM, true_c) # Fit to the normalized data
             DTR = dtr.DTrule_extraction(DT) # Extract rules.
             DTR.plot(get_feat_names(),class_colors=VLpath.class_colors, # Plot!
-                     Centroid=Centroid,
-                     title='Decision Tree Rules and Centroid Comparison')
-        elif fig_num == 8:
-            validatingVL(VLpath,'abs avg','Centroid poly',mxdays='prop',
-                         specific_save_name='Fig8.pdf')
-        elif fig_num == 9:
-            print("If class assignment scores are already saved, it will"+\
-                  " be faster to generate this figure by skipping"+\
-                  " the call to 'get_scores'- otherwise expect 6-7 hours...")
-            score,score_names = get_scores(VLpath)
-            wilcoxon_test(VLpath,scores,score_names,'Fig9.pdf')
+                     Centroid=Centroid,title=False,f2b=0.05)
+        elif fig_num == 7:
+            G,TR,CS,i2C = state_transfer(VLpath)
+            state_observation(G,CS,VLpath,TR,i2C) # Network is stochastic plot
         else:
             print("Fig #: "+str(fig_num)+EM)
     for fig_num in supp_fig_list:
         if fig_num == 1:
             before_and_after(VLpath,'FigS1.pdf')
+        elif fig_num == 2:
+            feat_vs_feat(VLpath,False,'FigS2.pdf')
         elif fig_num == 3:
-            feat_vs_feat(VLpath,False,'FigS3.pdf')
+            generate_DTpdf(VLpath,False,'FigS3.pdf')
         elif fig_num == 4:
-            generate_DTpdf(VLpath,False,'FigS4.pdf')
-        elif fig_num == 5:
-            validatingVL(VLpath,'abs avg','DecisionTree',mxdays='prop',
-                         specific_save_name='FigS5.pdf')
-        elif fig_num == 6:
-            validatingVL(VLpath,'abs avg','SVC',mxdays='prop',
-                         specific_save_name='FigS6.pdf')
-        elif fig_num == 7:
-            validatingVL(VLpath,'abs avg','kNN5',mxdays='prop',
-                         specific_save_name='FigS7.pdf')
-        elif fig_num == 8:
-            validatingVL(VLpath,'abs avg','Centroid poly projection',
-                         mxdays='prop',specific_save_name='FigS8.pdf')
+            M,true_c = get_training_data(VLpath)
+            cntoid.comparative_plot(M,true_c,get_feat_names(),
+                                    VLpath.class_colors)
         else:
             print("Fig S#: "+str(fig_num)+EM)
     
